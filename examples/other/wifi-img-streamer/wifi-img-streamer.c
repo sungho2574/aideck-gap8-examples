@@ -23,15 +23,13 @@
  *
  * WiFi image streamer example
  */
-#include "pmsis.h"
-
 #include "bsp/bsp.h"
-#include "bsp/camera/himax.h"
 #include "bsp/buffer.h"
-#include "gaplib/jpeg_encoder.h"
-#include "stdio.h"
-
+#include "bsp/camera/himax.h"
 #include "cpx.h"
+#include "gaplib/jpeg_encoder.h"
+#include "pmsis.h"
+#include "stdio.h"
 #include "wifi.h"
 
 #define IMG_ORIENTATION 0x0101
@@ -39,7 +37,7 @@
 #define CAM_HEIGHT 244
 
 static pi_task_t task1;
-static unsigned char *imgBuff;
+static unsigned char* imgBuff;
 static struct pi_device camera;
 static pi_buffer_t buffer;
 
@@ -53,8 +51,7 @@ static uint32_t transferTime = 0;
 static uint32_t encodingTime = 0;
 // #define OUTPUT_PROFILING_DATA
 
-static int open_pi_camera_himax(struct pi_device *device)
-{
+static int open_pi_camera_himax(struct pi_device* device) {
   struct pi_himax_conf cam_conf;
 
   pi_himax_conf_init(&cam_conf);
@@ -62,8 +59,7 @@ static int open_pi_camera_himax(struct pi_device *device)
   cam_conf.format = PI_CAMERA_QVGA;
 
   pi_open_from_conf(device, &cam_conf);
-  if (pi_camera_open(device))
-    return -1;
+  if (pi_camera_open(device)) return -1;
 
   // rotate image
   pi_camera_control(device, PI_CAMERA_CMD_START, 0);
@@ -72,8 +68,7 @@ static int open_pi_camera_himax(struct pi_device *device)
   pi_camera_reg_set(device, IMG_ORIENTATION, &set_value);
   pi_time_wait_us(1000000);
   pi_camera_reg_get(device, IMG_ORIENTATION, &reg_value);
-  if (set_value != reg_value)
-  {
+  if (set_value != reg_value) {
     cpxPrintToConsole(LOG_TO_CRTP, "Failed to rotate camera image\n");
     return -1;
   }
@@ -87,16 +82,13 @@ static int wifiConnected = 0;
 static int wifiClientConnected = 0;
 
 static CPXPacket_t rxp;
-void rx_task(void *parameters)
-{
-  while (1)
-  {
+void rx_task(void* parameters) {
+  while (1) {
     cpxReceivePacketBlocking(CPX_F_WIFI_CTRL, &rxp);
 
-    WiFiCTRLPacket_t * wifiCtrl = (WiFiCTRLPacket_t*) rxp.data;
+    WiFiCTRLPacket_t* wifiCtrl = (WiFiCTRLPacket_t*)rxp.data;
 
-    switch (wifiCtrl->cmd)
-    {
+    switch (wifiCtrl->cmd) {
       case WIFI_CTRL_STATUS_WIFI_CONNECTED:
         cpxPrintToConsole(LOG_TO_CRTP, "Wifi connected (%u.%u.%u.%u)\n",
                           wifiCtrl->data[0], wifiCtrl->data[1],
@@ -104,7 +96,8 @@ void rx_task(void *parameters)
         wifiConnected = 1;
         break;
       case WIFI_CTRL_STATUS_CLIENT_CONNECTED:
-        cpxPrintToConsole(LOG_TO_CRTP, "Wifi client connection status: %u\n", wifiCtrl->data[0]);
+        cpxPrintToConsole(LOG_TO_CRTP, "Wifi client connection status: %u\n",
+                          wifiCtrl->data[0]);
         wifiClientConnected = wifiCtrl->data[0];
         break;
       default:
@@ -113,13 +106,11 @@ void rx_task(void *parameters)
   }
 }
 
-static void capture_done_cb(void *arg)
-{
+static void capture_done_cb(void* arg) {
   xEventGroupSetBits(evGroup, CAPTURE_DONE_BIT);
 }
 
-typedef struct
-{
+typedef struct {
   uint8_t magic;
   uint16_t width;
   uint16_t height;
@@ -130,8 +121,7 @@ typedef struct
 
 static jpeg_encoder_t jpeg_encoder;
 
-typedef enum
-{
+typedef enum {
   RAW_ENCODING = 0,
   JPEG_ENCODING = 1
 } __attribute__((packed)) StreamerMode_t;
@@ -143,12 +133,14 @@ uint32_t footerSize;
 pi_buffer_t jpeg_data;
 uint32_t jpegSize;
 
-static StreamerMode_t streamerMode = RAW_ENCODING;
+// static StreamerMode_t streamerMode = RAW_ENCODING;
+static StreamerMode_t streamerMode = JPEG_ENCODING;
 
 static CPXPacket_t txp;
 
-void createImageHeaderPacket(CPXPacket_t * packet, uint32_t imgSize, StreamerMode_t imgType) {
-  img_header_t *imgHeader = (img_header_t *) packet->data;
+void createImageHeaderPacket(CPXPacket_t* packet, uint32_t imgSize,
+                             StreamerMode_t imgType) {
+  img_header_t* imgHeader = (img_header_t*)packet->data;
   imgHeader->magic = 0xBC;
   imgHeader->width = CAM_WIDTH;
   imgHeader->height = CAM_HEIGHT;
@@ -158,13 +150,13 @@ void createImageHeaderPacket(CPXPacket_t * packet, uint32_t imgSize, StreamerMod
   packet->dataLength = sizeof(img_header_t);
 }
 
-void sendBufferViaCPX(CPXPacket_t * packet, uint8_t * buffer, uint32_t bufferSize) {
+void sendBufferViaCPX(CPXPacket_t* packet, uint8_t* buffer,
+                      uint32_t bufferSize) {
   uint32_t offset = 0;
   uint32_t size = 0;
   do {
     size = sizeof(packet->data);
-    if (offset + size > bufferSize)
-    {
+    if (offset + size > bufferSize) {
       size = bufferSize - offset;
     }
     memcpy(packet->data, &buffer[offset], sizeof(packet->data));
@@ -183,7 +175,7 @@ void setupWiFi(void) {
   rxp.route.source = CPX_T_GAP8;
   txp.route.function = CPX_F_WIFI_CTRL;
   txp.route.version = CPX_VERSION;
-  WiFiCTRLPacket_t * wifiCtrl = (WiFiCTRLPacket_t*) txp.data;
+  WiFiCTRLPacket_t* wifiCtrl = (WiFiCTRLPacket_t*)txp.data;
 
   wifiCtrl->cmd = WIFI_CTRL_SET_SSID;
   memcpy(wifiCtrl->data, ssid, sizeof(ssid));
@@ -197,8 +189,7 @@ void setupWiFi(void) {
 }
 #endif
 
-void camera_task(void *parameters)
-{
+void camera_task(void* parameters) {
   vTaskDelay(2000);
 
 #ifdef SETUP_WIFI_AP
@@ -208,15 +199,13 @@ void camera_task(void *parameters)
   cpxPrintToConsole(LOG_TO_CRTP, "Starting camera task...\n");
   uint32_t resolution = CAM_WIDTH * CAM_HEIGHT;
   uint32_t captureSize = resolution * sizeof(unsigned char);
-  imgBuff = (unsigned char *)pmsis_l2_malloc(captureSize);
-  if (imgBuff == NULL)
-  {
+  imgBuff = (unsigned char*)pmsis_l2_malloc(captureSize);
+  if (imgBuff == NULL) {
     cpxPrintToConsole(LOG_TO_CRTP, "Failed to allocate Memory for Image \n");
     return;
   }
 
-  if (open_pi_camera_himax(&camera))
-  {
+  if (open_pi_camera_himax(&camera)) {
     cpxPrintToConsole(LOG_TO_CRTP, "Failed to open camera\n");
     return;
   }
@@ -225,16 +214,16 @@ void camera_task(void *parameters)
   jpeg_encoder_conf_init(&enc_conf);
   enc_conf.width = CAM_WIDTH;
   enc_conf.height = CAM_HEIGHT;
-  enc_conf.flags = 0; // Move this to the cluster
+  enc_conf.flags = 0;  // Move this to the cluster
 
-  if (jpeg_encoder_open(&jpeg_encoder, &enc_conf))
-  {
+  if (jpeg_encoder_open(&jpeg_encoder, &enc_conf)) {
     cpxPrintToConsole(LOG_TO_CRTP, "Failed initialize JPEG encoder\n");
     return;
   }
 
   pi_buffer_init(&buffer, PI_BUFFER_TYPE_L2, imgBuff);
-  pi_buffer_set_format(&buffer, CAM_WIDTH, CAM_HEIGHT, 1, PI_BUFFER_FORMAT_GRAY);
+  pi_buffer_set_format(&buffer, CAM_WIDTH, CAM_HEIGHT, 1,
+                       PI_BUFFER_FORMAT_GRAY);
 
   header.size = 1024;
   header.data = pmsis_l2_malloc(1024);
@@ -247,7 +236,8 @@ void camera_task(void *parameters)
   jpeg_data.data = pmsis_l2_malloc(1024 * 15);
 
   if (header.data == 0 || footer.data == 0 || jpeg_data.data == 0) {
-    cpxPrintToConsole(LOG_TO_CRTP, "Could not allocate memory for JPEG image\n");
+    cpxPrintToConsole(LOG_TO_CRTP,
+                      "Could not allocate memory for JPEG image\n");
     return;
   }
 
@@ -261,22 +251,23 @@ void camera_task(void *parameters)
 
   uint32_t imgSize = 0;
 
-  while (1)
-  {
-    if (wifiClientConnected == 1)
-    {
+  while (1) {
+    if (wifiClientConnected == 1) {
       start = xTaskGetTickCount();
-      pi_camera_capture_async(&camera, imgBuff, resolution, pi_task_callback(&task1, capture_done_cb, NULL));
+      pi_camera_capture_async(&camera, imgBuff, resolution,
+                              pi_task_callback(&task1, capture_done_cb, NULL));
       pi_camera_control(&camera, PI_CAMERA_CMD_START, 0);
-      xEventGroupWaitBits(evGroup, CAPTURE_DONE_BIT, pdTRUE, pdFALSE, (TickType_t)portMAX_DELAY);
+      xEventGroupWaitBits(evGroup, CAPTURE_DONE_BIT, pdTRUE, pdFALSE,
+                          (TickType_t)portMAX_DELAY);
       pi_camera_control(&camera, PI_CAMERA_CMD_STOP, 0);
       captureTime = xTaskGetTickCount() - start;
 
-      if (streamerMode == JPEG_ENCODING)
-      {
-        //jpeg_encoder_process_async(&jpeg_encoder, &buffer, &jpeg_data, pi_task_callback(&task1, encoding_done_cb, NULL));
-        //xEventGroupWaitBits(evGroup, JPEG_ENCODING_DONE_BIT, pdTRUE, pdFALSE, (TickType_t)portMAX_DELAY);
-        //jpeg_encoder_process_status(&jpegSize, NULL);
+      if (streamerMode == JPEG_ENCODING) {
+        // jpeg_encoder_process_async(&jpeg_encoder, &buffer, &jpeg_data,
+        // pi_task_callback(&task1, encoding_done_cb, NULL));
+        // xEventGroupWaitBits(evGroup, JPEG_ENCODING_DONE_BIT, pdTRUE, pdFALSE,
+        // (TickType_t)portMAX_DELAY); jpeg_encoder_process_status(&jpegSize,
+        // NULL);
         start = xTaskGetTickCount();
         jpeg_encoder_process(&jpeg_encoder, &buffer, &jpeg_data, &jpegSize);
         encodingTime = xTaskGetTickCount() - start;
@@ -294,7 +285,7 @@ void camera_task(void *parameters)
         cpxSendPacketBlocking(&txp);
 
         // Send image data
-        sendBufferViaCPX(&txp, (uint8_t*) jpeg_data.data, jpegSize);
+        sendBufferViaCPX(&txp, (uint8_t*)jpeg_data.data, jpegSize);
 
         // Send footer
         memcpy(txp.data, footer.data, footerSize);
@@ -302,9 +293,7 @@ void camera_task(void *parameters)
         cpxSendPacketBlocking(&txp);
 
         transferTime = xTaskGetTickCount() - start;
-      }
-      else
-      {
+      } else {
         imgSize = captureSize;
         start = xTaskGetTickCount();
 
@@ -318,13 +307,13 @@ void camera_task(void *parameters)
 
         transferTime = xTaskGetTickCount() - start;
       }
-// #ifdef OUTPUT_PROFILING_DATA
-      cpxPrintToConsole(LOG_TO_CRTP, "capture=%dms, encoding=%d ms (%d bytes), transfer=%d ms\n",
-                        captureTime, encodingTime, imgSize, transferTime);
-// #endif
-    }
-    else
-    {
+      // #ifdef OUTPUT_PROFILING_DATA
+      cpxPrintToConsole(
+          LOG_TO_CRTP,
+          "capture=%dms, encoding=%d ms (%d bytes), transfer=%d ms\n",
+          captureTime, encodingTime, imgSize, transferTime);
+      // #endif
+    } else {
       vTaskDelay(10);
     }
   }
@@ -332,18 +321,16 @@ void camera_task(void *parameters)
 
 #define LED_PIN 2
 static pi_device_t led_gpio_dev;
-void hb_task(void *parameters)
-{
+void hb_task(void* parameters) {
   (void)parameters;
-  char *taskname = pcTaskGetName(NULL);
+  char* taskname = pcTaskGetName(NULL);
 
   // Initialize the LED pin
   pi_gpio_pin_configure(&led_gpio_dev, LED_PIN, PI_GPIO_OUTPUT);
 
   const TickType_t xDelay = 500 / portTICK_PERIOD_MS;
 
-  while (1)
-  {
+  while (1) {
     pi_gpio_pin_write(&led_gpio_dev, LED_PIN, 1);
     vTaskDelay(xDelay);
     pi_gpio_pin_write(&led_gpio_dev, LED_PIN, 0);
@@ -351,16 +338,14 @@ void hb_task(void *parameters)
   }
 }
 
-void start_example(void)
-{
+void start_example(void) {
   struct pi_uart_conf conf;
   struct pi_device device;
   pi_uart_conf_init(&conf);
   conf.baudrate_bps = 115200;
 
   pi_open_from_conf(&device, &conf);
-  if (pi_uart_open(&device))
-  {
+  if (pi_uart_open(&device)) {
     printf("[UART] open failed !\n");
     pmsis_exit(-1);
   }
@@ -374,10 +359,9 @@ void start_example(void)
 
   BaseType_t xTask;
 
-  xTask = xTaskCreate(hb_task, "hb_task", configMINIMAL_STACK_SIZE * 2,
-                      NULL, tskIDLE_PRIORITY + 1, NULL);
-  if (xTask != pdPASS)
-  {
+  xTask = xTaskCreate(hb_task, "hb_task", configMINIMAL_STACK_SIZE * 2, NULL,
+                      tskIDLE_PRIORITY + 1, NULL);
+  if (xTask != pdPASS) {
     cpxPrintToConsole(LOG_TO_CRTP, "HB task did not start !\n");
     pmsis_exit(-1);
   }
@@ -385,34 +369,30 @@ void start_example(void)
   xTask = xTaskCreate(camera_task, "camera_task", configMINIMAL_STACK_SIZE * 4,
                       NULL, tskIDLE_PRIORITY + 1, NULL);
 
-  if (xTask != pdPASS)
-  {
+  if (xTask != pdPASS) {
     cpxPrintToConsole(LOG_TO_CRTP, "Camera task did not start !\n");
     pmsis_exit(-1);
   }
 
-  xTask = xTaskCreate(rx_task, "rx_task", configMINIMAL_STACK_SIZE * 2,
-                      NULL, tskIDLE_PRIORITY + 1, NULL);
+  xTask = xTaskCreate(rx_task, "rx_task", configMINIMAL_STACK_SIZE * 2, NULL,
+                      tskIDLE_PRIORITY + 1, NULL);
 
-  if (xTask != pdPASS)
-  {
+  if (xTask != pdPASS) {
     cpxPrintToConsole(LOG_TO_CRTP, "RX task did not start !\n");
     pmsis_exit(-1);
   }
 
-  while (1)
-  {
+  while (1) {
     pi_yield();
   }
 }
 
-int main(void)
-{
+int main(void) {
   pi_bsp_init();
 
   // Increase the FC freq to 250 MHz
   pi_freq_set(PI_FREQ_DOMAIN_FC, 250000000);
   __pi_pmu_voltage_set(PI_PMU_DOMAIN_FC, 1200);
 
-  return pmsis_kickoff((void *)start_example);
+  return pmsis_kickoff((void*)start_example);
 }
