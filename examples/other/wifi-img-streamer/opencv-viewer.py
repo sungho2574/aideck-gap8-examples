@@ -37,9 +37,13 @@
 #  JPEG image is taken from the stream using the JPEG start-of-frame (0xFF 0xD8)
 #  and the end-of-frame (0xFF 0xD9).
 
+import cv2
 import argparse
 import time
-import socket,os,struct, time
+import socket
+import os
+import struct
+import time
 import numpy as np
 
 # Args for setting IP/port of AI-deck. Default settings are for when
@@ -56,72 +60,72 @@ deck_ip = args.n
 print("Connecting to socket on {}:{}...".format(deck_ip, deck_port))
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 client_socket.connect((deck_ip, deck_port))
+# client_socket.settimeout(2.0)  # 2초 동안 데이터 안 오면 에러 발생
 print("Socket connected")
 
 imgdata = None
 data_buffer = bytearray()
 
-def rx_bytes(size):
-  data = bytearray()
-  while len(data) < size:
-    data.extend(client_socket.recv(size-len(data)))
-  return data
 
-import cv2
+def rx_bytes(size):
+    data = bytearray()
+    while len(data) < size:
+        data.extend(client_socket.recv(size-len(data)))
+    return data
+
 
 start = time.time()
 count = 0
 
-while(1):
+while (1):
     # First get the info
     packetInfoRaw = rx_bytes(4)
-    #print(packetInfoRaw)
+    # print(packetInfoRaw)
     [length, routing, function] = struct.unpack('<HBB', packetInfoRaw)
-    #print("Length is {}".format(length))
-    #print("Route is 0x{:02X}->0x{:02X}".format(routing & 0xF, routing >> 4))
-    #print("Function is 0x{:02X}".format(function))
+    # print("Length is {}".format(length))
+    # print("Route is 0x{:02X}->0x{:02X}".format(routing & 0xF, routing >> 4))
+    # print("Function is 0x{:02X}".format(function))
 
     imgHeader = rx_bytes(length - 2)
-    #print(imgHeader)
-    #print("Length of data is {}".format(len(imgHeader)))
+    # print(imgHeader)
+    # print("Length of data is {}".format(len(imgHeader)))
     [magic, width, height, depth, format, size] = struct.unpack('<BHHBBI', imgHeader)
 
     if magic == 0xBC:
-      #print("Magic is good")
-      #print("Resolution is {}x{} with depth of {} byte(s)".format(width, height, depth))
-      #print("Image format is {}".format(format))
-      #print("Image size is {} bytes".format(size))
+        # print("Magic is good")
+        # print("Resolution is {}x{} with depth of {} byte(s)".format(width, height, depth))
+        # print("Image format is {}".format(format))
+        # print("Image size is {} bytes".format(size))
 
-      # Now we start rx the image, this will be split up in packages of some size
-      imgStream = bytearray()
+        # Now we start rx the image, this will be split up in packages of some size
+        imgStream = bytearray()
 
-      while len(imgStream) < size:
-          packetInfoRaw = rx_bytes(4)
-          [length, dst, src] = struct.unpack('<HBB', packetInfoRaw)
-          #print("Chunk size is {} ({:02X}->{:02X})".format(length, src, dst))
-          chunk = rx_bytes(length - 2)
-          imgStream.extend(chunk)
-     
-      count = count + 1
-      meanTimePerImage = (time.time()-start) / count
-      print("{}".format(meanTimePerImage))
-      print("{}".format(1/meanTimePerImage))
+        while len(imgStream) < size:
+            packetInfoRaw = rx_bytes(4)
+            [length, dst, src] = struct.unpack('<HBB', packetInfoRaw)
+            # print("Chunk size is {} ({:02X}->{:02X})".format(length, src, dst))
+            chunk = rx_bytes(length - 2)
+            imgStream.extend(chunk)
 
-      if format == 0:
-          bayer_img = np.frombuffer(imgStream, dtype=np.uint8)   
-          bayer_img.shape = (244, 324)
-          color_img = cv2.cvtColor(bayer_img, cv2.COLOR_BayerBG2BGRA)
-          cv2.imshow('Raw', bayer_img)
-          cv2.imshow('Color', color_img)
-          if args.save:
-              cv2.imwrite(f"stream_out/raw/img_{count:06d}.png", bayer_img)
-              cv2.imwrite(f"stream_out/debayer/img_{count:06d}.png", color_img)
-          cv2.waitKey(1)
-      else:
-          with open("img.jpeg", "wb") as f:
-              f.write(imgStream)
-          nparr = np.frombuffer(imgStream, np.uint8)
-          decoded = cv2.imdecode(nparr,cv2.IMREAD_UNCHANGED)
-          cv2.imshow('JPEG', decoded)
-          cv2.waitKey(1)
+        count = count + 1
+        meanTimePerImage = (time.time()-start) / count
+        print("{}".format(meanTimePerImage))
+        print("{}".format(1/meanTimePerImage))
 
+        if format == 0:
+            bayer_img = np.frombuffer(imgStream, dtype=np.uint8)
+            bayer_img.shape = (244, 324)
+            color_img = cv2.cvtColor(bayer_img, cv2.COLOR_BayerBG2BGRA)
+            cv2.imshow('Raw', bayer_img)
+            cv2.imshow('Color', color_img)
+            if args.save:
+                cv2.imwrite(f"stream_out/raw/img_{count:06d}.png", bayer_img)
+                cv2.imwrite(f"stream_out/debayer/img_{count:06d}.png", color_img)
+            cv2.waitKey(1)
+        else:
+            with open("img.jpeg", "wb") as f:
+                f.write(imgStream)
+            nparr = np.frombuffer(imgStream, np.uint8)
+            decoded = cv2.imdecode(nparr, cv2.IMREAD_UNCHANGED)
+            cv2.imshow('JPEG', decoded)
+            cv2.waitKey(1)
