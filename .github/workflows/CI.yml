@@ -24,13 +24,21 @@ jobs:
         with:
           submodules: true
 
-      # 1. WiFi 스트리머 예제만 빌드
-      - name: build wifi-img-streamer example
-        run: docker run --rm -v ${PWD}:/module bitcraze/aideck tools/build/make-example examples/other/wifi-img-streamer build image
+      # 1. WiFi 스트리머 예제만 빌드 (기존)
+      # - name: build wifi-img-streamer example
+      #   run: docker run --rm -v ${PWD}:/module bitcraze/aideck tools/build/make-example examples/other/wifi-img-streamer build image
 
-      # 2. 결과물 복사 (경로 주의!)
+      # 1. WiFi 스트리머 다중 예제 빌드 (HOTSPOT 설정 포함)
+      - name: build wifi-img-streamer-multiple example
+        run: docker run --rm -v ${PWD}:/module bitcraze/aideck tools/build/make-example examples/other/wifi-img-streamer-multiple HOTSPOT_SSID=iPhone HOTSPOT_PASSWORD=965vvfmblind build image
+
+      # 2. 결과물 복사 (경로 주의!) (기존)
+      # - name: rename bin file
+      #   run: cp examples/other/wifi-img-streamer/BUILD/GAP8_V2/GCC_RISCV_FREERTOS/target.board.devices.flash.img aideck_gap8.bin
+
+      # 2. 결과물 복사 (wifi-img-streamer-multiple 버전)
       - name: rename bin file
-        run: cp examples/other/wifi-img-streamer/BUILD/GAP8_V2/GCC_RISCV_FREERTOS/target.board.devices.flash.img aideck_gap8.bin
+        run: cp examples/other/wifi-img-streamer-multiple/BUILD/GAP8_V2/GCC_RISCV_FREERTOS/target.board.devices.flash.img aideck_gap8.bin
 
       # 3. 업로드
       - name: Upload Build Artifact
