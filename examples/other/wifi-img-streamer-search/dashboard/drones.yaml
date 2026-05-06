@@ -1,0 +1,9 @@
+drones:
+  - id: "cf1"
+    radio_uri: "radio://0/80/2M/E7E7E7E7E9"
+    wifi_ip: "172.20.10.13"
+    color: "#44aaff"
+  # - id: "cf2"
+  #   radio_uri: "radio://0/90/2M/E7E7E7E7E7"
+  #   wifi_ip: "192.168.3.3"
+  #   color: "#ff8844"

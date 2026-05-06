@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <title>Drone Dashboard</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { background: #1a1a1a; color: #ccc; font-family: monospace; overflow: hidden; height: 100vh; }
+
+    #layout { display: flex; height: 100vh; }
+
+    /* ── Map ── */
+    #map-area { flex: 1; position: relative; overflow: hidden; background: #111; }
+    #map { width: 100%; height: 100%; }
+
+    .grid-line { stroke: #2a2a2a; stroke-width: 1; }
+    .grid-line-major { stroke: #333; stroke-width: 1; }
+    .grid-label { fill: #555; font-size: 10px; font-family: monospace; }
+    .origin-line { stroke: #3a3a3a; stroke-width: 1.5; }
+
+    .marker-x { stroke: #f5c542; stroke-width: 2; }
+    .marker-label { fill: #f5c542; font-size: 11px; font-family: monospace; }
+    .marker-pos { fill: #888; font-size: 9px; font-family: monospace; }
+
+    .drone-shape { stroke-width: 1.5; }
+    .drone-label { font-size: 10px; font-family: monospace; }
+    .drone-pos { font-size: 9px; font-family: monospace; fill: #aaa; }
+
+    /* ── Sidebar ── */
+    #sidebar {
+      width: 340px; flex-shrink: 0;
+      overflow-y: auto; background: #1e1e1e;
+      border-left: 1px solid #333; padding: 8px;
+    }
+    .drone-panel {
+      margin-bottom: 10px; border: 1px solid #3a3a3a;
+      border-radius: 4px; padding: 8px;
+    }
+    .drone-header {
+      display: flex; align-items: center; gap: 6px; margin-bottom: 4px;
+    }
+    .drone-id { font-weight: bold; font-size: 13px; }
+    .dot { font-size: 11px; }
+    .dot-ok   { color: #4c4; }
+    .dot-err  { color: #c44; }
+    .dot-unk  { color: #666; }
+    .label-sm { font-size: 10px; color: #888; }
+    .fps { font-size: 10px; color: #666; margin-left: auto; }
+    .pos-row { font-size: 10px; color: #888; margin-bottom: 4px; }
+    img.feed {
+      display: block; width: 100%; height: auto;
+      border-radius: 2px; background: #0a0a0a;
+      border: 1px solid #2a2a2a;
+    }
+    .no-feed {
+      width: 100%; height: 80px; background: #0a0a0a;
+      display: flex; align-items: center; justify-content: center;
+      color: #444; font-size: 11px; border: 1px solid #2a2a2a; border-radius: 2px;
+    }
+  </style>
+</head>
+<body>
+<div id="layout">
+  <div id="map-area">
+    <svg id="map">
+      <g id="grid-layer"></g>
+      <g id="markers-layer"></g>
+      <g id="drones-layer"></g>
+    </svg>
+  </div>
+  <div id="sidebar">
+    {% for drone in drones %}
+    <div class="drone-panel" id="panel-{{ drone.id }}">
+      <div class="drone-header">
+        <span class="drone-id" style="color: {{ drone.color }}">{{ drone.id }}</span>
+        <span class="dot dot-unk" id="dot-wifi-{{ drone.id }}" title="WiFi">&#9679; WiFi</span>
+        <span class="dot dot-unk" id="dot-radio-{{ drone.id }}" title="Radio">&#9679; Radio</span>
+        <span class="fps" id="fps-{{ drone.id }}">-- fps</span>
+      </div>
+      <div class="pos-row" id="pos-{{ drone.id }}">x: --, y: --, z: --</div>
+      <img class="feed" id="feed-{{ drone.id }}" alt="{{ drone.id }}">
+    </div>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+const DRONES = {{ drones | tojson }};
+const DRONE_MAP = {};
+DRONES.forEach(d => { DRONE_MAP[d.id] = d; });
+
+// ── Map viewport state ────────────────────────────────────────────────────────
+const MAP_MARGIN = 60;   // px padding around content
+let scale = 120;         // pixels per meter
+let originX = 0.0;       // world-coord at center of SVG
+let originY = 0.0;
+
+function svgSize() {
+  const el = document.getElementById('map');
+  return { w: el.clientWidth, h: el.clientHeight };
+}
+
+function worldToSVG(wx, wy) {
+  const { w, h } = svgSize();
+  return [
+    w / 2 + (wx - originX) * scale,
+    h / 2 - (wy - originY) * scale,  // world Y+ up, SVG Y+ down
+  ];
+}
+
+// ── Grid ──────────────────────────────────────────────────────────────────────
+function drawGrid() {
+  const layer = document.getElementById('grid-layer');
+  layer.innerHTML = '';
+  const { w, h } = svgSize();
+  if (w === 0 || h === 0) return;
+
+  // world bounds visible in SVG
+  const wxMin = originX - (w / 2) / scale;
+  const wxMax = originX + (w / 2) / scale;
+  const wyMin = originY - (h / 2) / scale;
+  const wyMax = originY + (h / 2) / scale;
+
+  // grid step: 0.5m minor, 1m major
+  const step = 0.5;
+  const startX = Math.floor(wxMin / step) * step;
+  const startY = Math.floor(wyMin / step) * step;
+
+  for (let wx = startX; wx <= wxMax + step; wx += step) {
+    const isMajor = Math.abs(wx % 1.0) < 0.01;
+    const [sx] = worldToSVG(wx, 0);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', sx); line.setAttribute('y1', 0);
+    line.setAttribute('x2', sx); line.setAttribute('y2', h);
+    line.setAttribute('class', isMajor ? 'grid-line-major' : 'grid-line');
+    layer.appendChild(line);
+    if (isMajor) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      const [, sy] = worldToSVG(0, 0);
+      t.setAttribute('x', sx + 2); t.setAttribute('y', Math.min(sy - 2, h - 4));
+      t.setAttribute('class', 'grid-label');
+      t.textContent = wx.toFixed(1) + 'm';
+      layer.appendChild(t);
+    }
+  }
+
+  for (let wy = startY; wy <= wyMax + step; wy += step) {
+    const isMajor = Math.abs(wy % 1.0) < 0.01;
+    const [, sy] = worldToSVG(0, wy);
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', 0); line.setAttribute('y1', sy);
+    line.setAttribute('x2', w); line.setAttribute('y2', sy);
+    line.setAttribute('class', isMajor ? 'grid-line-major' : 'grid-line');
+    layer.appendChild(line);
+    if (isMajor) {
+      const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      const [sx2] = worldToSVG(0, 0);
+      t.setAttribute('x', Math.max(sx2 + 2, 2)); t.setAttribute('y', sy - 2);
+      t.setAttribute('class', 'grid-label');
+      t.textContent = wy.toFixed(1) + 'm';
+      layer.appendChild(t);
+    }
+  }
+
+  // Origin axes
+  const [ox, oy] = worldToSVG(0, 0);
+  const ax = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  ax.setAttribute('x1', 0); ax.setAttribute('y1', oy);
+  ax.setAttribute('x2', w); ax.setAttribute('y2', oy);
+  ax.setAttribute('class', 'origin-line');
+  layer.appendChild(ax);
+  const ay = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+  ay.setAttribute('x1', ox); ay.setAttribute('y1', 0);
+  ay.setAttribute('x2', ox); ay.setAttribute('y2', h);
+  ay.setAttribute('class', 'origin-line');
+  layer.appendChild(ay);
+}
+
+// ── Drones ────────────────────────────────────────────────────────────────────
+function updateDrones(drones) {
+  const layer = document.getElementById('drones-layer');
+  const now = Date.now() / 1000;
+
+  drones.forEach(d => {
+    const cfg = DRONE_MAP[d.id];
+    const color = cfg ? cfg.color : '#aaa';
+    const [sx, sy] = worldToSVG(d.x, d.y);
+    const yawDeg = d.yaw || 0;
+
+    let g = document.getElementById('drone-g-' + d.id);
+    if (!g) {
+      g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('id', 'drone-g-' + d.id);
+
+      // Triangle: apex forward (+Y direction before rotation)
+      const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+      poly.setAttribute('id', 'drone-poly-' + d.id);
+      poly.setAttribute('class', 'drone-shape');
+      poly.setAttribute('points', '0,-13 7,8 -7,8');
+      layer.appendChild(g);
+      g.appendChild(poly);
+
+      const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      lbl.setAttribute('id', 'drone-lbl-' + d.id);
+      lbl.setAttribute('class', 'drone-label');
+      lbl.setAttribute('text-anchor', 'middle');
+      lbl.setAttribute('dy', '22');
+      g.appendChild(lbl);
+    }
+
+    g.setAttribute('transform', `translate(${sx.toFixed(1)}, ${sy.toFixed(1)}) rotate(${(-yawDeg).toFixed(1)})`);
+
+    const poly = document.getElementById('drone-poly-' + d.id);
+    poly.setAttribute('fill', color);
+    poly.setAttribute('fill-opacity', d.wifi_ok || d.radio_ok ? '0.85' : '0.3');
+    poly.setAttribute('stroke', color);
+
+    const lbl = document.getElementById('drone-lbl-' + d.id);
+    lbl.setAttribute('fill', color);
+    lbl.textContent = d.id;
+
+    // Sidebar updates
+    const dotWifi  = document.getElementById('dot-wifi-'  + d.id);
+    const dotRadio = document.getElementById('dot-radio-' + d.id);
+    const fpsEl    = document.getElementById('fps-'       + d.id);
+    const posEl    = document.getElementById('pos-'       + d.id);
+
+    if (dotWifi)  dotWifi.className  = 'dot ' + (d.wifi_ok  ? 'dot-ok' : 'dot-err');
+    if (dotRadio) dotRadio.className = 'dot ' + (d.radio_ok ? 'dot-ok' : 'dot-err');
+    if (fpsEl)    fpsEl.textContent  = (d.fps || 0).toFixed(1) + ' fps';
+    if (posEl)    posEl.textContent  =
+      `x: ${d.x.toFixed(2)}  y: ${d.y.toFixed(2)}  z: ${d.z.toFixed(2)}`;
+  });
+}
+
+// ── Markers ───────────────────────────────────────────────────────────────────
+function updateMarkers(markers) {
+  const layer = document.getElementById('markers-layer');
+  const now = Date.now() / 1000;
+
+  // Hide all first, then show current ones
+  Array.from(layer.children).forEach(c => c.setAttribute('visibility', 'hidden'));
+
+  markers.forEach(m => {
+    if (now - m.ts > 5) return;
+    const [sx, sy] = worldToSVG(m.x, m.y);
+    const gid = 'marker-g-' + m.id;
+
+    let g = document.getElementById(gid);
+    if (!g) {
+      g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+      g.setAttribute('id', gid);
+
+      const arm = 7;
+      [[-arm,-arm,arm,arm],[arm,-arm,-arm,arm]].forEach(([x1,y1,x2,y2]) => {
+        const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1); line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2); line.setAttribute('y2', y2);
+        line.setAttribute('class', 'marker-x');
+        g.appendChild(line);
+      });
+
+      const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      lbl.setAttribute('class', 'marker-label');
+      lbl.setAttribute('text-anchor', 'middle');
+      lbl.setAttribute('dy', '-10');
+      lbl.setAttribute('id', 'marker-lbl-' + m.id);
+      g.appendChild(lbl);
+
+      const pos = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      pos.setAttribute('class', 'marker-pos');
+      pos.setAttribute('text-anchor', 'middle');
+      pos.setAttribute('dy', '18');
+      pos.setAttribute('id', 'marker-pos-' + m.id);
+      g.appendChild(pos);
+
+      layer.appendChild(g);
+    }
+
+    g.setAttribute('transform', `translate(${sx.toFixed(1)}, ${sy.toFixed(1)})`);
+    g.setAttribute('visibility', 'visible');
+
+    const lbl = document.getElementById('marker-lbl-' + m.id);
+    if (lbl) lbl.textContent = '#' + m.id;
+    const pos = document.getElementById('marker-pos-' + m.id);
+    if (pos) pos.textContent = `(${m.x.toFixed(2)}, ${m.y.toFixed(2)})`;
+  });
+}
+
+// ── Auto-fit viewport ─────────────────────────────────────────────────────────
+function fitViewport(state) {
+  if (!state.drones.length && !state.markers.length) return;
+  const now = Date.now() / 1000;
+
+  const pts = [
+    ...state.drones.map(d => [d.x, d.y]),
+    ...state.markers.filter(m => now - m.ts < 5).map(m => [m.x, m.y]),
+    [0, 0],  // always keep origin visible
+  ];
+
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  pts.forEach(([x, y]) => {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  });
+
+  const { w, h } = svgSize();
+  const rangeX = Math.max(maxX - minX, 1.5);
+  const rangeY = Math.max(maxY - minY, 1.5);
+  const newScale = Math.min(
+    (w - MAP_MARGIN * 2) / rangeX,
+    (h - MAP_MARGIN * 2) / rangeY,
+    300,
+  );
+  scale = Math.max(newScale, 20);
+  originX = (minX + maxX) / 2;
+  originY = (minY + maxY) / 2;
+}
+
+// ── State polling ─────────────────────────────────────────────────────────────
+async function pollState() {
+  try {
+    const resp = await fetch('/api/state');
+    if (resp.ok) {
+      const data = await resp.json();
+      fitViewport(data);
+      drawGrid();
+      updateDrones(data.drones);
+      updateMarkers(data.markers);
+    }
+  } catch (e) {}
+  setTimeout(pollState, 200);
+}
+
+// ── Frame polling ─────────────────────────────────────────────────────────────
+function pollFrame(droneId, delay) {
+  const img = document.getElementById('feed-' + droneId);
+  if (!img) return;
+
+  function refresh() {
+    const url = '/api/frame/' + droneId + '?t=' + Date.now();
+    const tmp = new Image();
+    tmp.onload = () => { img.src = tmp.src; setTimeout(refresh, 200); };
+    tmp.onerror = () => setTimeout(refresh, 500);
+    tmp.src = url;
+  }
+  setTimeout(refresh, delay);
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => { drawGrid(); });
+document.addEventListener('DOMContentLoaded', () => {
+  drawGrid();
+  pollState();
+  DRONES.forEach((d, i) => pollFrame(d.id, i * 70));
+});
+</script>
+</body>
+</html>
